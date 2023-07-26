@@ -1,6 +1,36 @@
 import openai 
-from dataclasses import dataclass , field 
 import typing as T
+import configparser as cp 
+from dataclasses import dataclass , field 
+
+configs = cp.ConfigParser()
+configs.read('.configs.ini')
+
+openai.organization = configs['OpenAI']['organization']
+openai.api_key = configs['OpenAI']['api_key']
+
+create_system = lambda : {'role' : 'system', 'content' : 'you will help improve a resume for jobhunting'}
+create_user = lambda question : {'role' : 'user', 'content' : question}
+create_asst = lambda history : {'role' : 'assistant', 'content' : history}
+
+def create_messages(question, history=None) -> T.Dict[str, str]:
+    msg = []
+    msg.append(create_system())
+    msg.append(create_user(question))
+    if history is not None:
+        msg.append(create_asst(history))
+    return msg 
+
+def get_response(msg : T.Dict[str, str], **kwargs) -> str:
+    completion = openai.ChatCompletion.create(
+        model='gpt-3.5-turbo',
+        messages=msg,
+        temperature=kwargs.get('temperature', 0.6),
+        presence_penalty=kwargs.get('presence_penalty', 0.0)
+    )
+
+    return completion['choices'][0]['message']['content'] 
+
 
 @dataclass 
 class Section:
@@ -105,6 +135,27 @@ class Company:
             output += f"- {outcome}\n"
         return output 
 
+    def edit_outcome(self) -> None:
+        happy = True 
+
+        while happy:
+            msg = f"Here are the outcomes for work at {self.company_name}:\n"
+            for i, outcome in enumerate(self.outcomes):
+                msg += f"{i + 1}. {outcome}\n"
+            msg += 'Which outcome would you like to expand on? '
+            choice = int(input(msg))
+            
+            if choice < 1 and choice > len(self.outcomes):
+                raise Exception('Unknown outcome. Please try again!')
+
+            prompt = f"Improve the following sentence for a resume: {self.outcomes[choice - 1]}. Write one sentence only."
+            msg = create_messages(question=prompt)
+            response = get_response(msg=msg, temperature=0.6)
+            self.outcomes[choice - 1] = response
+
+
+            happy = bool(input(f'The new outcome is: {response}\nAre you happy with it? Type 1 for yes, 0 for no: '))
+
 @dataclass 
 class ProfessionalExperiences(Section):
     list_positions : T.List[Company] = field(default_factory=lambda : [])
@@ -115,8 +166,8 @@ class ProfessionalExperiences(Section):
         while choice.lower() != 'no':
             role = input('Title of the role: ')
             location = input('Location of the company: ')
-            start_date = input('Start date of the work (like "Jun 2022")')
-            end_date = input('End date of the work (leave blank if current role)')
+            start_date = input('Start date of the work (like "Jun 2022"): ')
+            end_date = input('End date of the work (leave blank if current role): ')
 
             work = Company(company_name=choice, role=role, location=location, start_date=start_date, end_date=end_date)
             work.add_outcomes()
@@ -130,6 +181,17 @@ class ProfessionalExperiences(Section):
             output += pos.__repr__()
             output += '\n'
         return output 
+    
+    def modify_work(self):
+        happy = True 
+
+        while happy:
+            msg = f"Here's the professional experience so far:\n"
+            msg += self.__repr__()
+            choice = int(input(f'{msg}\n\nWhich company\'s outcome would you like to modify? '))
+            self.list_positions[choice - 1].edit_outcome()
+
+            happy = bool(input(f"Would you like to modify any other outcomes? Type 1 for yes, 0 for no: "))
 
 @dataclass 
 class Project:
@@ -230,6 +292,13 @@ Enter the number that works best for you:\n"""
             self.sections.append(section)
             choice = int(input(msg))
 
+    def edit_work(self) -> None:
+        section = list(filter(lambda s : isinstance(s, ProfessionalExperiences), self.sections)) #[0]
+        if section is []:
+            raise Exception('Please add a "professional work" section!')
+        
+        section = section[0]
+        section.modify_work()
 
 
 if __name__ == '__main__':
@@ -273,9 +342,12 @@ if __name__ == '__main__':
     # print(projects)
 
     resume = Resume()
-    resume.get_personal_info()
+    # resume.get_personal_info()
     resume.add_section()
     print(resume)
+    print()
+    print()
+    resume.edit_work()
 
 
     pass 
